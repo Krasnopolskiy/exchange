@@ -1,0 +1,57 @@
+name: exchange
+
+x-django: &django
+  build:
+    context: ..
+    dockerfile: ./deploy/Dockerfile
+  env_file:
+    - ./config/.env
+  environment:
+    - REDIS_HOST=redis
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  nginx:
+    image: nginx
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/conf.d/nginx.conf
+      - ./data/nginx/log/:/var/log/nginx/
+    depends_on:
+      - backend
+
+  backend:
+    <<: *django
+    command: [ "daphne", "backend.asgi:application", "-b", "0.0.0.0", "-p", "8000" ]
+
+  celery-worker:
+    <<: *django
+    command: [ "celery", "--app=backend.celery", "worker", "--loglevel=info" ]
+
+  binance-fetch:
+    <<: *django
+    command: [ "python", "manage.py", "binance_fetch", "60" ]
+    volumes:
+      - ./data/binance:/backend/data
+
+  binance-replay:
+    <<: *django
+    command: [ "python", "manage.py", "binance_replay" ]
+    volumes:
+      - ./data/binance:/backend/data
+
+  redis:
+    image: redis:7.4
+    env_file: ./config/.env
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 3
